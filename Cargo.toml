@@ -1,0 +1,7 @@
+[package]
+name = "dataflow"
+version = "0.1.0"
+authors = ["Andres Rios <agrios@uc.cl>"]
+edition = "2018"
+
+[dependencies]

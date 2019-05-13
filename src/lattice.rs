@@ -37,7 +37,7 @@ pub trait Lattice: PartialEq + Eq + Sized + Clone + std::fmt::Debug {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SignAnalysis {
+pub enum PreciseSignAnalysis {
     Top,
     Bottom,
     Lower,
@@ -47,8 +47,8 @@ pub enum SignAnalysis {
     GreaterEqual,
 }
 
-use SignAnalysis::*;
-impl SimpleLattice for SignAnalysis {
+use PreciseSignAnalysis::*;
+impl SimpleLattice for PreciseSignAnalysis {
     fn applies(ty: &TyKind) -> bool {
         match ty {
             &TyKind::Int(_) => true,

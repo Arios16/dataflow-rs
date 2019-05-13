@@ -11,8 +11,8 @@ mod lattice;
 use block::Block;
 use rustc::hir::def_id::LOCAL_CRATE;
 use rustc::mir::{
-    BasicBlock, BasicBlockData, Local, Mir, Operand, Place, PlaceBase, StatementKind,
-    TerminatorKind, START_BLOCK,
+    BasicBlock, BasicBlockData, Local, Mir, Operand, Place, PlaceBase, Rvalue, StatementKind,
+    TerminatorKind, UnOp, START_BLOCK,
 };
 use rustc::ty::TyKind;
 use rustc_data_structures::indexed_vec::IndexVec;
@@ -84,6 +84,7 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
             let mut lattice = self.input[block.id].clone();
             let mut lattice2 = None;
             let mut if_local_bool = None;
+            let mut reverse = false;
             let mut equivs = HashMap::new();
 
             // To be able to propagate conditional information
@@ -108,9 +109,33 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
                 }
                 _ => {}
             }
+            // To propagate conditional information through a logical not (and thats as far as ill go)
+            if let Some(_) = if_local_bool {
+                for stmt in block.data.statements.iter() {
+                    if let StatementKind::Assign(
+                        Place::Base(PlaceBase::Local(ref local)),
+                        ref rvalue,
+                    ) = stmt.kind
+                    {
+                        if let Rvalue::UnaryOp(
+                            UnOp::Not,
+                            Operand::Copy(Place::Base(PlaceBase::Local(ref local2))),
+                        )
+                        | Rvalue::UnaryOp(
+                            UnOp::Not,
+                            Operand::Move(Place::Base(PlaceBase::Local(ref local2))),
+                        ) = **rvalue
+                        {
+                            if if_local_bool.unwrap() == local {
+                                if_local_bool = Some(local2);
+                                reverse = true;
+                            }
+                        }
+                    }
+                }
+            }
 
             // Process statements in this block
-            let mut finished = false;
             for stmt in block.data.statements.iter() {
                 match stmt.kind {
                     StatementKind::Assign(ref place, ref rvalue) => match place {
@@ -118,12 +143,18 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
                             PlaceBase::Local(local) => {
                                 if if_local_bool == Some(local) {
                                     let r = lattice.flow_branch(rvalue, &mut equivs);
-                                    lattice = r.0;
-                                    lattice2 = Some(r.1);
-                                    finished = true;
+                                    if reverse {
+                                        lattice = r.1;
+                                        lattice2 = Some(r.0);
+                                    } else {
+                                        lattice = r.0;
+                                        lattice2 = Some(r.1);
+                                    }
                                 } else {
-                                    assert!(!finished);
                                     lattice = lattice.flow_assign(*local, rvalue, &mut equivs);
+                                    if let Some(ref mut lattice2p) = lattice2 {
+                                        *lattice2p = lattice2p.flow_assign(*local, rvalue, &mut equivs);
+                                    }
                                     println!("stmt: {:?}, {:?}", stmt, lattice);
                                 }
                             }
@@ -158,30 +189,40 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
                 .successors()
                 .cloned()
                 .collect::<Vec<BasicBlock>>();
-            if if_local_bool.is_some(){
-                self.input[successors[0]] = L::join(&lattice, &self.input[successors[0]]);
-                self.input[successors[1]] = L::join(&lattice2.unwrap(), &self.input[successors[1]]);
-                let b1 = Block::new(
-                    successors[0],
-                    &self.function_mir.basic_blocks()[successors[0]],
-                    self.order[&successors[0]],
-                );
-                let b2 = Block::new(
-                    successors[1],
-                    &self.function_mir.basic_blocks()[successors[1]],
-                    self.order[&successors[1]],
-                );
-                self.worklist.push(b1);
-                self.worklist.push(b2);
-            } else {
-                for suc in successors.into_iter(){
-                    self.input[suc] = L::join(&lattice, &self.input[suc]);
-                    let b = Block::new(
-                        suc,
-                        &self.function_mir.basic_blocks()[suc],
-                        self.order[&suc]
+            if if_local_bool.is_some() && lattice2.is_some() {
+                let newinput = L::join(&lattice, &self.input[successors[0]]);
+                if newinput != self.input[successors[0]] {
+                    self.input[successors[0]] = newinput;
+                    let b1 = Block::new(
+                        successors[0],
+                        &self.function_mir.basic_blocks()[successors[0]],
+                        self.order[&successors[0]],
                     );
-                    self.worklist.push(b);
+                    self.worklist.push(b1);
+                }
+
+                let newinput = L::join(&lattice2.unwrap(), &self.input[successors[1]]);
+                if newinput != self.input[successors[1]] {
+                    self.input[successors[1]] = newinput;
+                    let b2 = Block::new(
+                        successors[1],
+                        &self.function_mir.basic_blocks()[successors[1]],
+                        self.order[&successors[1]],
+                    );
+                    self.worklist.push(b2);
+                }
+            } else {
+                for suc in successors.into_iter() {
+                    let newinput = L::join(&lattice, &self.input[suc]);
+                    if newinput != self.input[suc] {
+                        self.input[suc] = newinput;
+                        let b = Block::new(
+                            suc,
+                            &self.function_mir.basic_blocks()[suc],
+                            self.order[&suc],
+                        );
+                        self.worklist.push(b);
+                    }
                 }
             }
         }
@@ -267,7 +308,7 @@ impl rustc_driver::Callbacks for CompilerCallback {
                 //     }
                 // }
                 let mut analysis =
-                    Analysis::<HashMap<Local, lattice::SignAnalysis>>::new(mir);
+                    Analysis::<HashMap<Local, lattice::PreciseSignAnalysis>>::new(mir);
                 analysis.run();
                 println!("{:?}", analysis.input);
                 analysis.print_mir();

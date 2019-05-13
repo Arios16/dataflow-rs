@@ -20,10 +20,8 @@ fn main() {
 fn test_fn(mut x: i32) -> i32 {
     // let y = 1+2;
     // return y;
-    if(x > 0){
-        return 0;
-    }
-    x
+    assert!(x>0);
+    return x;
 }
 
 fn black_box(x: i32) {}

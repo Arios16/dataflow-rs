@@ -320,9 +320,6 @@ impl rustc_driver::Callbacks for CompilerCallback {
                     .skip(start)
                     .take(end - start)
                     .collect::<String>();
-                if fn_name == "main" {
-                    continue;
-                }
                 println!("Analysing function: \"{}\"", fn_name);
                 // println!("function: {}", module_name);
                 let mir = tcx.optimized_mir(key);

@@ -22,22 +22,33 @@ pub trait Lattice: PartialEq + Eq + Sized + Clone + std::fmt::Debug {
     fn bot(decls: &IndexVec<Local, LocalDecl>) -> Self;
     fn top(decls: &IndexVec<Local, LocalDecl>) -> Self;
     fn join(op1: &Self, op2: &Self) -> Self;
-    fn flow_assign(&self, local: Local, rvalue: &Box<Rvalue>, equiv: &mut HashMap<Local, Vec<Local>>) -> Self;
-    fn flow_branch(&self, rvalue: &Box<Rvalue>, equiv: &mut HashMap<Local, Vec<Local>>) -> (Self, Self);
+    fn flow_assign(
+        &self,
+        local: Local,
+        rvalue: &Box<Rvalue>,
+        equiv: &mut HashMap<Local, Vec<Local>>,
+    ) -> Self;
+    fn flow_branch(
+        &self,
+        rvalue: &Box<Rvalue>,
+        equiv: &mut HashMap<Local, Vec<Local>>,
+    ) -> (Self, Self);
     fn flow_function_call(&self, func: &Operand, args: &Vec<Operand>, destination: &Place) -> Self;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SignAnalysisSimpleLattice {
+pub enum SignAnalysis {
     Top,
     Bottom,
     Lower,
+    LowerEqual,
     Zero,
     Greater,
+    GreaterEqual,
 }
 
-use SignAnalysisSimpleLattice::*;
-impl SimpleLattice for SignAnalysisSimpleLattice {
+use SignAnalysis::*;
+impl SimpleLattice for SignAnalysis {
     fn applies(ty: &TyKind) -> bool {
         match ty {
             &TyKind::Int(_) => true,
@@ -59,8 +70,19 @@ impl SimpleLattice for SignAnalysisSimpleLattice {
         }
         match (*op1, *op2) {
             (Top, _) | (_, Top) => Top,
-            (Bottom, a) => a,
-            (a, Bottom) => a,
+            (Bottom, a) | (a, Bottom) => a,
+            (Greater, GreaterEqual)
+            | (GreaterEqual, Greater)
+            | (Zero, GreaterEqual)
+            | (GreaterEqual, Zero)
+            | (Zero, Greater)
+            | (Greater, Zero) => GreaterEqual,
+            (Lower, LowerEqual)
+            | (LowerEqual, Lower)
+            | (Zero, LowerEqual)
+            | (LowerEqual, Zero)
+            | (Zero, Lower)
+            | (Lower, Zero) => LowerEqual,
             _ => Top,
         }
     }
@@ -84,14 +106,40 @@ impl SimpleLattice for SignAnalysisSimpleLattice {
     fn flow_binop(op: &BinOp, arg1: &Self, arg2: &Self) -> Self {
         match op {
             BinOp::Add => match (arg1, arg2) {
-                (Greater, Zero) | (Zero, Greater) | (Greater, Greater) => Greater,
-                (Lower, Zero) | (Zero, Lower) | (Lower, Lower) => Lower,
+                (Greater, Zero)
+                | (Zero, Greater)
+                | (Greater, Greater)
+                | (Greater, GreaterEqual)
+                | (GreaterEqual, Greater) => Greater,
+                (Lower, Zero)
+                | (Zero, Lower)
+                | (Lower, Lower)
+                | (Lower, LowerEqual)
+                | (LowerEqual, Lower) => Lower,
+                (GreaterEqual, GreaterEqual) | (Zero, GreaterEqual) | (GreaterEqual, Zero) => {
+                    GreaterEqual
+                }
+                (LowerEqual, LowerEqual) | (Zero, LowerEqual) | (LowerEqual, Zero) => LowerEqual,
                 (Zero, Zero) => Zero,
                 _ => Top,
             },
             BinOp::Sub => match (arg1, arg2) {
-                (Greater, Zero) | (Zero, Lower) | (Greater, Lower) => Greater,
-                (Zero, Greater) | (Lower, Greater) | (Lower, Zero) => Lower,
+                (Greater, Zero)
+                | (Zero, Lower)
+                | (Greater, Lower)
+                | (GreaterEqual, Lower)
+                | (Greater, LowerEqual) => Greater,
+                (Zero, Greater)
+                | (Lower, Greater)
+                | (Lower, Zero)
+                | (LowerEqual, Greater)
+                | (Lower, GreaterEqual) => Lower,
+                (Zero, GreaterEqual) | (LowerEqual, GreaterEqual) | (LowerEqual, Zero) => {
+                    LowerEqual
+                }
+                (Zero, LowerEqual) | (GreaterEqual, LowerEqual) | (GreaterEqual, Zero) => {
+                    GreaterEqual
+                }
                 (Zero, Zero) => Zero,
                 _ => Top,
             },
@@ -99,6 +147,10 @@ impl SimpleLattice for SignAnalysisSimpleLattice {
                 (Zero, _) | (_, Zero) => Zero,
                 (Lower, Lower) | (Greater, Greater) => Greater,
                 (Greater, Lower) | (Lower, Greater) => Lower,
+                (GreaterEqual, GreaterEqual)
+                | (GreaterEqual, Greater)
+                | (Greater, GreaterEqual) => GreaterEqual,
+                (LowerEqual, LowerEqual) | (LowerEqual, Lower) | (Lower, LowerEqual) => LowerEqual,
                 _ => Top,
             },
             BinOp::Div => match (arg1, arg2) {
@@ -116,6 +168,8 @@ impl SimpleLattice for SignAnalysisSimpleLattice {
                 Zero => Zero,
                 Greater => Lower,
                 Lower => Greater,
+                GreaterEqual => LowerEqual,
+                LowerEqual => GreaterEqual,
                 _ => Top,
             },
             _ => Top,
@@ -127,30 +181,44 @@ impl SimpleLattice for SignAnalysisSimpleLattice {
             BinOp::Eq => match (arg1, arg2) {
                 (Top, _) => (*arg2, *arg2),
                 (_, Top) => (*arg1, *arg1),
+                (GreaterEqual, Greater) | (Greater, GreaterEqual) => (Greater, Greater),
+                (LowerEqual, Lower) | (Lower, LowerEqual) => (Lower, Lower),
+                (GreaterEqual, Zero) | (Zero, GreaterEqual) => (Zero, Zero),
+                (LowerEqual, Zero) | (Zero, LowerEqual) => (Zero, Zero),
                 _ => (*arg1, *arg2),
             },
             BinOp::Lt => match (arg1, arg2) {
-                (Top, Zero) => (Lower, Zero),
-                (Top, Lower) => (Lower, Lower),
-                (Zero, Top) => (Zero, Greater),
-                (Greater, Top) => (Greater, Greater),
+                (Top, Zero) | (LowerEqual, Zero) => (Lower, Zero),
+                (Top, Lower) | (LowerEqual, Lower) => (Lower, Lower),
+                (Zero, Top) | (Zero, GreaterEqual) => (Zero, Greater),
+                (Greater, Top) | (Greater, GreaterEqual) => (Greater, Greater),
+                (Top, LowerEqual) => (LowerEqual, LowerEqual),
                 _ => (*arg1, *arg2),
             },
             BinOp::Le => match (arg1, arg2) {
-                (Top, Lower) => (Lower, Lower),
-                (Greater, Top) => (Greater, Greater),
+                (Top, Lower) | (LowerEqual, Lower) => (Lower, Lower),
+                (Top, LowerEqual) => (LowerEqual, LowerEqual),
+                (Greater, Top) | (Greater, GreaterEqual) => (Greater, Greater),
+                (Top, Zero) => (LowerEqual, Zero),
+                (Zero, Top) => (Zero, GreaterEqual),
+                (GreaterEqual, Top) => (GreaterEqual, GreaterEqual),
                 _ => (*arg1, *arg2),
             },
             BinOp::Ge => match (arg1, arg2) {
-                (Top, Greater) => (Greater, Greater),
-                (Lower, Top) => (Lower, Lower),
+                (Top, Greater) | (GreaterEqual, Greater) => (Greater, Greater),
+                (Top, GreaterEqual) => (GreaterEqual, GreaterEqual),
+                (Lower, Top) | (Lower, LowerEqual) => (Lower, Lower),
+                (Top, Zero) => (GreaterEqual, Zero),
+                (Zero, Top) => (Zero, LowerEqual),
+                (LowerEqual, Top) => (LowerEqual, LowerEqual),
                 _ => (*arg1, *arg2),
             },
             BinOp::Gt => match (arg1, arg2) {
-                (Top, Greater) => (Greater, Greater),
-                (Top, Zero) => (Greater, Zero),
-                (Lower, Top) => (Lower, Lower),
-                (Zero, Top) => (Zero, Lower),
+                (Top, Zero) | (GreaterEqual, Zero) => (Greater, Zero),
+                (Top, Greater) | (GreaterEqual, Greater) => (Greater, Greater),
+                (Zero, Top) | (Zero, LowerEqual) => (Zero, Lower),
+                (Lower, Top) | (Lower, LowerEqual) => (Lower, Lower),
+                (Top, GreaterEqual) => (GreaterEqual, GreaterEqual),
                 _ => (*arg1, *arg2),
             },
             _ => (*arg1, *arg2),
@@ -160,27 +228,37 @@ impl SimpleLattice for SignAnalysisSimpleLattice {
     fn flow_cond_false(op: &BinOp, arg1: &Self, arg2: &Self) -> (Self, Self) {
         match op {
             BinOp::Lt => match (arg1, arg2) {
-                (Top, Greater) => (Greater, Greater),
-                (Lower, Top) => (Lower, Lower),
+                (Top, Greater) | (GreaterEqual, Greater) => (Greater, Greater),
+                (Top, GreaterEqual) => (GreaterEqual, GreaterEqual),
+                (Lower, Top) | (Lower, LowerEqual) => (Lower, Lower),
+                (Top, Zero) => (GreaterEqual, Zero),
+                (Zero, Top) => (Zero, LowerEqual),
+                (LowerEqual, Top) => (LowerEqual, LowerEqual),
                 _ => (*arg1, *arg2),
             },
             BinOp::Le => match (arg1, arg2) {
-                (Top, Greater) => (Greater, Greater),
-                (Top, Zero) => (Greater, Zero),
-                (Lower, Top) => (Lower, Lower),
-                (Zero, Top) => (Zero, Lower),
+                (Top, Zero) | (GreaterEqual, Zero) => (Greater, Zero),
+                (Top, Greater) | (GreaterEqual, Greater) => (Greater, Greater),
+                (Zero, Top) | (Zero, LowerEqual) => (Zero, Lower),
+                (Lower, Top) | (Lower, LowerEqual) => (Lower, Lower),
+                (Top, GreaterEqual) => (GreaterEqual, GreaterEqual),
                 _ => (*arg1, *arg2),
             },
             BinOp::Ge => match (arg1, arg2) {
-                (Top, Zero) => (Lower, Zero),
-                (Top, Lower) => (Lower, Lower),
-                (Zero, Top) => (Zero, Greater),
-                (Greater, Top) => (Greater, Greater),
+                (Top, Zero) | (LowerEqual, Zero) => (Lower, Zero),
+                (Top, Lower) | (LowerEqual, Lower) => (Lower, Lower),
+                (Zero, Top) | (Zero, GreaterEqual) => (Zero, Greater),
+                (Greater, Top) | (Greater, GreaterEqual) => (Greater, Greater),
+                (Top, LowerEqual) => (LowerEqual, LowerEqual),
                 _ => (*arg1, *arg2),
             },
             BinOp::Gt => match (arg1, arg2) {
-                (Top, Lower) => (Lower, Lower),
-                (Greater, Top) => (Greater, Greater),
+                (Top, Lower) | (LowerEqual, Lower) => (Lower, Lower),
+                (Top, LowerEqual) => (LowerEqual, LowerEqual),
+                (Greater, Top) | (Greater, GreaterEqual) => (Greater, Greater),
+                (Top, Zero) => (LowerEqual, Zero),
+                (Zero, Top) => (Zero, GreaterEqual),
+                (GreaterEqual, Top) => (GreaterEqual, GreaterEqual),
                 _ => (*arg1, *arg2),
             },
             _ => (*arg1, *arg2),
@@ -217,7 +295,12 @@ impl<SL: SimpleLattice> Lattice for HashMap<Local, SL> {
         newlattice
     }
 
-    fn flow_assign(&self, local: Local, rvalue: &Box<Rvalue>, equiv: &mut HashMap<Local, Vec<Local>>) -> Self {
+    fn flow_assign(
+        &self,
+        local: Local,
+        rvalue: &Box<Rvalue>,
+        equiv: &mut HashMap<Local, Vec<Local>>,
+    ) -> Self {
         if !self.contains_key(&local) {
             return self.clone();
         }
@@ -245,12 +328,18 @@ impl<SL: SimpleLattice> Lattice for HashMap<Local, SL> {
         let mut newlattice = self.clone();
         let val = match &**rvalue {
             Rvalue::Use(op) => {
-                if let Some(local2) = get_local(op){
-                    equiv.entry(local).or_insert_with(|| Vec::new()).push(local2);
-                    equiv.entry(local2).or_insert_with(|| Vec::new()).push(local);
+                if let Some(local2) = get_local(op) {
+                    equiv
+                        .entry(local)
+                        .or_insert_with(|| Vec::new())
+                        .push(local2);
+                    equiv
+                        .entry(local2)
+                        .or_insert_with(|| Vec::new())
+                        .push(local);
                 }
                 get_val(op)
-            },
+            }
             Rvalue::BinaryOp(op, op1, op2) | Rvalue::CheckedBinaryOp(op, op1, op2) => {
                 let op1 = get_val(op1);
                 let op2 = get_val(op2);
@@ -266,7 +355,11 @@ impl<SL: SimpleLattice> Lattice for HashMap<Local, SL> {
         return newlattice;
     }
 
-    fn flow_branch(&self, rvalue: &Box<Rvalue>, equiv: &mut HashMap<Local, Vec<Local>>) -> (Self, Self) {
+    fn flow_branch(
+        &self,
+        rvalue: &Box<Rvalue>,
+        equiv: &mut HashMap<Local, Vec<Local>>,
+    ) -> (Self, Self) {
         let get_val = |op: &Operand| match op {
             Operand::Copy(place) | Operand::Move(place) => match place {
                 Place::Base(place_base) => match place_base {
@@ -303,16 +396,16 @@ impl<SL: SimpleLattice> Lattice for HashMap<Local, SL> {
                     let mut lattice1 = self.clone();
                     if let Some(local) = local1 {
                         *(lattice1.get_mut(&local).unwrap()) = l1;
-                        if let Some(equivs) = equiv.get(&local){
-                            for local3 in equivs.iter(){
+                        if let Some(equivs) = equiv.get(&local) {
+                            for local3 in equivs.iter() {
                                 *(lattice1.get_mut(&local3).unwrap()) = l1;
                             }
                         }
                     }
                     if let Some(local) = local2 {
                         *(lattice1.get_mut(&local).unwrap()) = l2;
-                        if let Some(equivs) = equiv.get(&local){
-                            for local3 in equivs.iter(){
+                        if let Some(equivs) = equiv.get(&local) {
+                            for local3 in equivs.iter() {
                                 *(lattice1.get_mut(&local3).unwrap()) = l2;
                             }
                         }
@@ -322,16 +415,16 @@ impl<SL: SimpleLattice> Lattice for HashMap<Local, SL> {
                     let mut lattice2 = self.clone();
                     if let Some(local) = local1 {
                         *(lattice2.get_mut(&local).unwrap()) = l1;
-                        if let Some(equivs) = equiv.get(&local){
-                            for local3 in equivs.iter(){
+                        if let Some(equivs) = equiv.get(&local) {
+                            for local3 in equivs.iter() {
                                 *(lattice2.get_mut(&local3).unwrap()) = l1;
                             }
                         }
                     }
                     if let Some(local) = local2 {
                         *(lattice2.get_mut(&local).unwrap()) = l2;
-                        if let Some(equivs) = equiv.get(&local){
-                            for local3 in equivs.iter(){
+                        if let Some(equivs) = equiv.get(&local) {
+                            for local3 in equivs.iter() {
                                 *(lattice2.get_mut(&local3).unwrap()) = l2;
                             }
                         }
@@ -346,7 +439,12 @@ impl<SL: SimpleLattice> Lattice for HashMap<Local, SL> {
         }
     }
 
-    fn flow_function_call(&self, _func: &Operand, _args: &Vec<Operand>, destination: &Place) -> Self {
+    fn flow_function_call(
+        &self,
+        _func: &Operand,
+        _args: &Vec<Operand>,
+        destination: &Place,
+    ) -> Self {
         let mut r = self.clone();
         match destination {
             Place::Base(place_base) => match place_base {

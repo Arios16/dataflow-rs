@@ -124,7 +124,7 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
                                 } else {
                                     assert!(!finished);
                                     lattice = lattice.flow_assign(*local, rvalue, &mut equivs);
-                                    println!("{:?}", lattice);
+                                    println!("stmt: {:?}, {:?}", stmt, lattice);
                                 }
                             }
                             _ => {}
@@ -159,8 +159,8 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
                 .cloned()
                 .collect::<Vec<BasicBlock>>();
             if if_local_bool.is_some(){
-                self.input[successors[0]] = lattice;
-                self.input[successors[1]] = lattice2.unwrap();
+                self.input[successors[0]] = L::join(&lattice, &self.input[successors[0]]);
+                self.input[successors[1]] = L::join(&lattice2.unwrap(), &self.input[successors[1]]);
                 let b1 = Block::new(
                     successors[0],
                     &self.function_mir.basic_blocks()[successors[0]],
@@ -175,7 +175,7 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
                 self.worklist.push(b2);
             } else {
                 for suc in successors.into_iter(){
-                    self.input[suc] = lattice.clone();
+                    self.input[suc] = L::join(&lattice, &self.input[suc]);
                     let b = Block::new(
                         suc,
                         &self.function_mir.basic_blocks()[suc],
@@ -267,7 +267,7 @@ impl rustc_driver::Callbacks for CompilerCallback {
                 //     }
                 // }
                 let mut analysis =
-                    Analysis::<HashMap<Local, lattice::SignAnalysisSimpleLattice>>::new(mir);
+                    Analysis::<HashMap<Local, lattice::SignAnalysis>>::new(mir);
                 analysis.run();
                 println!("{:?}", analysis.input);
                 analysis.print_mir();

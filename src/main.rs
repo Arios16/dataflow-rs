@@ -11,8 +11,8 @@ mod lattice;
 use block::Block;
 use rustc::hir::def_id::LOCAL_CRATE;
 use rustc::mir::{
-    BasicBlock, BasicBlockData, Local, Mir, Operand, Place, PlaceBase, Rvalue, StatementKind,
-    TerminatorKind, UnOp, START_BLOCK,
+    BasicBlock, BasicBlockData, CastKind, Local, Mir, Operand, Place, PlaceBase, Rvalue, Statement,
+    StatementKind, TerminatorKind, UnOp, START_BLOCK,
 };
 use rustc::ty::TyKind;
 use rustc_data_structures::indexed_vec::IndexVec;
@@ -153,9 +153,9 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
                                 } else {
                                     lattice = lattice.flow_assign(*local, rvalue, &mut equivs);
                                     if let Some(ref mut lattice2p) = lattice2 {
-                                        *lattice2p = lattice2p.flow_assign(*local, rvalue, &mut equivs);
+                                        *lattice2p =
+                                            lattice2p.flow_assign(*local, rvalue, &mut equivs);
                                     }
-                                    println!("stmt: {:?}, {:?}", stmt, lattice);
                                 }
                             }
                             _ => {}
@@ -228,6 +228,32 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
         }
     }
 
+    fn run_closure(&self, f: &Fn(&Statement, &L) -> Vec<String>) -> Vec<String> {
+        let mut r = Vec::new();
+        for (block, block_data) in self.function_mir.basic_blocks().iter_enumerated() {
+            let mut input = self.input[block].clone();
+            for stmt in block_data.statements.iter() {
+                let mut equivs = HashMap::new();
+                let t = f(stmt, &input);
+                r.extend(t);
+                match stmt.kind {
+                    StatementKind::Assign(ref place, ref rvalue) => match place {
+                        Place::Base(place_base) => match place_base {
+                            PlaceBase::Local(local) => {
+                                input = input.flow_assign(*local, rvalue, &mut equivs);
+                            }
+                            _ => {}
+                        },
+                        _ => {}
+                    },
+                    _ => {} // We only really care about assignments
+                }
+            }
+        }
+        r
+    }
+
+    #[allow(unused)]
     fn print_mir(&self) {
         for (idx, block_data) in self.function_mir.basic_blocks().iter().enumerate() {
             let block_id = BasicBlock::from_usize(idx);
@@ -281,7 +307,9 @@ impl rustc_driver::Callbacks for CompilerCallback {
         compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
             // let (main_id, _) = tcx.entry_fn(LOCAL_CRATE).unwrap();
             let set = tcx.mir_keys(LOCAL_CRATE);
-            for &key in set.iter() {
+            let mut keys = set.iter().cloned().collect::<Vec<_>>();
+            keys.sort();
+            for key in keys.into_iter() {
                 let module_name = key.describe_as_module(tcx);
                 let (start, end) = (
                     module_name.find('`').unwrap() + 1,
@@ -292,11 +320,11 @@ impl rustc_driver::Callbacks for CompilerCallback {
                     .skip(start)
                     .take(end - start)
                     .collect::<String>();
-                if fn_name != "test_fn" {
+                if fn_name == "main" {
                     continue;
                 }
-                println!("function: {}", fn_name);
-                println!("function: {}", module_name);
+                println!("Analysing function: \"{}\"", fn_name);
+                // println!("function: {}", module_name);
                 let mir = tcx.optimized_mir(key);
                 // for (local, decl) in mir.local_decls.iter_enumerated() {
                 //     println!("{:?} {:?}", local, decl.ty);
@@ -310,8 +338,16 @@ impl rustc_driver::Callbacks for CompilerCallback {
                 let mut analysis =
                     Analysis::<HashMap<Local, lattice::PreciseSignAnalysis>>::new(mir);
                 analysis.run();
-                println!("{:?}", analysis.input);
-                analysis.print_mir();
+                let errors = analysis.run_closure(&f);
+                if errors.len()==0{
+                    println!("No errors found.");
+                } else {
+                    for err in errors.into_iter(){
+                        println!("{}", err);
+                    }
+                }
+                // println!("{:?}", analysis.input);
+                // analysis.print_mir();
                 println!();
             }
         });
@@ -332,7 +368,45 @@ fn main() {
             return;
         }
     };
-    let args = vec![exe, "example.rs", "--sysroot", &sysroot, "-O"];
+    let target = std::env::args().skip(1).next().expect("Missing target source file");
+
+    let args = vec![exe, &target, "--sysroot", &sysroot, "-O", "-A", "dead_code", "-A", "unused_mut", "--crate-type=lib"];
     let args = args.into_iter().map(|x| x.to_owned()).collect::<Vec<_>>();
     rustc_driver::run_compiler(&args[..], &mut CompilerCallback, None, None).unwrap();
+}
+
+fn f(stmt: &Statement, input: &HashMap<Local, lattice::PreciseSignAnalysis>) -> Vec<String> {
+    // println!("stmt: {:?} lattice: {:?}", stmt, input);
+    let mut r = Vec::new();
+    if let StatementKind::Assign(_, ref rvalue) = stmt.kind {
+        match &**rvalue {
+            Rvalue::Cast(CastKind::Misc, op1, ty) => match ty.sty {
+                rustc::ty::TyKind::Uint(_) => match op1 {
+                    Operand::Copy(place) | Operand::Move(place) => {
+                        if let Place::Base(PlaceBase::Local(local)) = place {
+                            if input.contains_key(local) {
+                                match input[local] {
+                                    lattice::PreciseSignAnalysis::Lower => {
+                                        r.push(format!("Error at {:?}. Value lower than 0 is being cast as unsigned integer.", 
+                                               stmt.source_info.span));
+                                    }
+                                    lattice::PreciseSignAnalysis::Top
+                                    | lattice::PreciseSignAnalysis::LowerEqual => {
+                                        r.push(format!("Possible error at {:?}. Value being cast as unsigned integer may be lower than 0.", 
+                                                stmt.source_info.span));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    r
+    // println!("{:?}, {:?}", stmt, input);
 }

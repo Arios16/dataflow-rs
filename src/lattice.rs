@@ -150,7 +150,9 @@ impl SimpleLattice for PreciseSignAnalysis {
                 (GreaterEqual, GreaterEqual)
                 | (GreaterEqual, Greater)
                 | (Greater, GreaterEqual) => GreaterEqual,
-                (LowerEqual, LowerEqual) | (LowerEqual, Lower) | (Lower, LowerEqual) => LowerEqual,
+                (LowerEqual, LowerEqual) | (LowerEqual, Lower) | (Lower, LowerEqual) => {
+                    GreaterEqual
+                }
                 _ => Top,
             },
             BinOp::Div => match (arg1, arg2) {
@@ -433,7 +435,6 @@ impl<SL: SimpleLattice> Lattice for HashMap<Local, SL> {
                 } else {
                     (self.clone(), self.clone())
                 }
-
             }
             _ => (self.clone(), self.clone()),
         }

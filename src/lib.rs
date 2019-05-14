@@ -341,17 +341,7 @@ impl<
                     .take(end - start)
                     .collect::<String>();
                 println!("Analysing function: \"{}\"", fn_name);
-                // println!("function: {}", module_name);
                 let mir = tcx.optimized_mir(key);
-                // for (local, decl) in mir.local_decls.iter_enumerated() {
-                //     println!("{:?} {:?}", local, decl.ty);
-                //     match decl.ty.sty {
-                //         TyKind::Int(a) => {
-                //             println!("{:?}", a);
-                //         }
-                //         _ => {}
-                //     }
-                // }
                 let mut analysis = Analysis::<L>::new(mir);
                 analysis.run();
                 let errors = analysis.run_closure(&self.f);
@@ -362,8 +352,6 @@ impl<
                         println!("{}", err);
                     }
                 }
-                // println!("{:?}", analysis.input);
-                // analysis.print_mir();
                 println!();
             }
         });

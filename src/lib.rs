@@ -5,19 +5,23 @@ extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_interface;
 
+pub use rustc::mir;
+pub use rustc::ty;
+pub use rustc_data_structures::indexed_vec::IndexVec;
+
 mod block;
-mod lattice;
+pub mod lattice;
 
 use block::Block;
 use rustc::hir::def_id::LOCAL_CRATE;
 use rustc::mir::{
-    BasicBlock, BasicBlockData, CastKind, Local, Mir, Operand, Place, PlaceBase, Rvalue, Statement,
+    BasicBlock, BasicBlockData, Mir, Operand, Place, PlaceBase, Rvalue, Statement,
     StatementKind, TerminatorKind, UnOp, START_BLOCK,
 };
 use rustc::ty::TyKind;
-use rustc_data_structures::indexed_vec::IndexVec;
 use rustc_interface::interface;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::marker::PhantomData;
 
 fn reverse_post_order(
     blocks: &IndexVec<BasicBlock, BasicBlockData>,
@@ -300,9 +304,25 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
     }
 }
 
-struct CompilerCallback;
+struct CompilerCallback<
+    L: lattice::Lattice + Send + Sync,
+    F: for<'r, 's, 't0> std::ops::Fn(&'r rustc::mir::Statement<'s>, &'t0 L) -> Vec<String>
+        + 'static
+        + Send
+        + Sync,
+> {
+    f: F,
+    l: PhantomData<L>,
+}
 
-impl rustc_driver::Callbacks for CompilerCallback {
+impl<
+        L: lattice::Lattice + Send + Sync,
+        F: for<'r, 's, 't0> std::ops::Fn(&'r rustc::mir::Statement<'s>, &'t0 L) -> Vec<String>
+            + 'static
+            + Send
+            + Sync,
+    > rustc_driver::Callbacks for CompilerCallback<L, F>
+{
     fn after_analysis(&mut self, compiler: &interface::Compiler) -> bool {
         compiler.global_ctxt().unwrap().peek_mut().enter(|tcx| {
             // let (main_id, _) = tcx.entry_fn(LOCAL_CRATE).unwrap();
@@ -332,14 +352,13 @@ impl rustc_driver::Callbacks for CompilerCallback {
                 //         _ => {}
                 //     }
                 // }
-                let mut analysis =
-                    Analysis::<HashMap<Local, lattice::PreciseSignAnalysis>>::new(mir);
+                let mut analysis = Analysis::<L>::new(mir);
                 analysis.run();
-                let errors = analysis.run_closure(&f);
-                if errors.len()==0{
+                let errors = analysis.run_closure(&self.f);
+                if errors.len() == 0 {
                     println!("No errors found.");
                 } else {
-                    for err in errors.into_iter(){
+                    for err in errors.into_iter() {
                         println!("{}", err);
                     }
                 }
@@ -353,7 +372,16 @@ impl rustc_driver::Callbacks for CompilerCallback {
     }
 }
 
-fn main() {
+pub fn run<
+    L: lattice::Lattice + Send + Sync,
+    F: for<'r, 's, 't0> std::ops::Fn(&'r rustc::mir::Statement<'s>, &'t0 L) -> Vec<String>
+        + 'static
+        + Send
+        + Sync,
+>(
+    target: &str,
+    f: &'static F,
+) {
     let exe = std::env::current_exe().unwrap();
     let exe = exe.to_str().unwrap();
     let sysroot = match std::env::var_os("RUST_SYSROOT") {
@@ -365,45 +393,24 @@ fn main() {
             return;
         }
     };
-    let target = std::env::args().skip(1).next().expect("Missing target source file");
+    // let target = std::env::args().skip(1).next().expect("Missing target source file");
 
-    let args = vec![exe, &target, "--sysroot", &sysroot, "-O", "-A", "dead_code", "-A", "unused_mut", "--crate-type=lib"];
+    let args = vec![
+        exe,
+        target,
+        "--sysroot",
+        &sysroot,
+        "-O",
+        "-A",
+        "dead_code",
+        "-A",
+        "unused_mut",
+        "--crate-type=lib",
+    ];
     let args = args.into_iter().map(|x| x.to_owned()).collect::<Vec<_>>();
-    rustc_driver::run_compiler(&args[..], &mut CompilerCallback, None, None).unwrap();
-}
-
-fn f(stmt: &Statement, input: &HashMap<Local, lattice::PreciseSignAnalysis>) -> Vec<String> {
-    // println!("stmt: {:?} lattice: {:?}", stmt, input);
-    let mut r = Vec::new();
-    if let StatementKind::Assign(_, ref rvalue) = stmt.kind {
-        match &**rvalue {
-            Rvalue::Cast(CastKind::Misc, op1, ty) => match ty.sty {
-                rustc::ty::TyKind::Uint(_) => match op1 {
-                    Operand::Copy(place) | Operand::Move(place) => {
-                        if let Place::Base(PlaceBase::Local(local)) = place {
-                            if input.contains_key(local) {
-                                match input[local] {
-                                    lattice::PreciseSignAnalysis::Lower => {
-                                        r.push(format!("Error at {:?}. Value lower than 0 is being cast as unsigned integer.", 
-                                               stmt.source_info.span));
-                                    }
-                                    lattice::PreciseSignAnalysis::Top
-                                    | lattice::PreciseSignAnalysis::LowerEqual => {
-                                        r.push(format!("Possible error at {:?}. Value being cast as unsigned integer may be lower than 0.", 
-                                                stmt.source_info.span));
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                },
-                _ => {}
-            },
-            _ => {}
-        }
-    }
-    r
-    // println!("{:?}, {:?}", stmt, input);
+    let mut callback = CompilerCallback {
+        f: f,
+        l: PhantomData::<L>,
+    };
+    rustc_driver::run_compiler(&args[..], &mut callback, None, None).unwrap();
 }

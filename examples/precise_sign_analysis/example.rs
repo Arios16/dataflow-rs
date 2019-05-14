@@ -19,7 +19,6 @@ fn test_fn4(mut x: i32, mut y: i32){
     println!("{}", arr[idx as usize]);
 }
 
-
 fn test_fn5(mut x: i32, mut y: i32){
     let arr = [1,2,3,4];
     if x <= 0 {

@@ -1,10 +1,8 @@
-use rustc::mir;
-use rustc::mir::interpret::ConstValue;
-use rustc::mir::{BinOp, Operand, Place, PlaceBase, Rvalue, UnOp};
-use rustc::mir::{Local, LocalDecl};
-use rustc::ty::TyKind;
-use rustc_data_structures::indexed_vec::IndexVec;
-use std::collections::HashMap;
+// Not-so-precise Sign Analysis.
+
+use dataflow::mir::interpret::ConstValue;
+use dataflow::mir::{BinOp, UnOp};
+use dataflow::ty::TyKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignAnalysis {
@@ -16,7 +14,7 @@ pub enum SignAnalysis {
 }
 
 use SignAnalysis::*;
-impl SimpleLattice for SignAnalysis {
+impl dataflow::lattice::SimpleLattice for SignAnalysis {
     fn applies(ty: &TyKind) -> bool {
         match ty {
             &TyKind::Int(_) => true,

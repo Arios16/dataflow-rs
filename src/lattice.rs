@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use rustc::mir::interpret::ConstValue;
 use rustc::mir::{BinOp, Operand, Place, PlaceBase, Rvalue, UnOp};
 use rustc::mir::{Local, LocalDecl};
@@ -5,7 +7,7 @@ use rustc::ty::TyKind;
 use rustc_data_structures::indexed_vec::IndexVec;
 use std::collections::HashMap;
 
-pub trait SimpleLattice: PartialEq + Eq + Copy + std::fmt::Debug {
+pub trait SimpleLattice: PartialEq + Eq + Copy + Debug {
     fn applies(ty: &TyKind) -> bool;
     fn bot() -> Self;
     fn top() -> Self;
@@ -17,7 +19,7 @@ pub trait SimpleLattice: PartialEq + Eq + Copy + std::fmt::Debug {
     fn flow_cond_false(op: &BinOp, arg1: &Self, arg2: &Self) -> (Self, Self);
 }
 
-pub trait Lattice: PartialEq + Eq + Sized + Clone + std::fmt::Debug {
+pub trait Lattice: PartialEq + Eq + Sized + Clone + Debug {
     fn bot(decls: &IndexVec<Local, LocalDecl>) -> Self;
     fn top(decls: &IndexVec<Local, LocalDecl>) -> Self;
     fn join(op1: &Self, op2: &Self) -> Self;
@@ -32,7 +34,12 @@ pub trait Lattice: PartialEq + Eq + Sized + Clone + std::fmt::Debug {
         rvalue: &Box<Rvalue>,
         equiv: &mut HashMap<Local, Vec<Local>>,
     ) -> (Self, Self);
-    fn flow_function_call(&self, func: &Operand, args: &Vec<Operand>, destination: &Place) -> Self;
+    fn flow_function_call(
+        &self, 
+        func: &Operand, 
+        args: &Vec<Operand>, 
+        destination: &Place
+    ) -> Self;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -15,8 +15,8 @@ pub mod lattice;
 use block::Block;
 use rustc::hir::def_id::LOCAL_CRATE;
 use rustc::mir::{
-    BasicBlock, BasicBlockData, Mir, Operand, Place, PlaceBase, Rvalue, Statement,
-    StatementKind, TerminatorKind, UnOp, START_BLOCK,
+    BasicBlock, BasicBlockData, Mir, Operand, Place, PlaceBase, Rvalue, Statement, StatementKind,
+    TerminatorKind, UnOp, START_BLOCK,
 };
 use rustc::ty::TyKind;
 use rustc_interface::interface;
@@ -232,14 +232,12 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
         }
     }
 
-    fn run_closure(&self, f: &Fn(&Statement, &L) -> Vec<String>) -> Vec<String> {
-        let mut r = Vec::new();
+    fn run_closure(&self, f: &Fn(&Statement, &L)) {
         for (block, block_data) in self.function_mir.basic_blocks().iter_enumerated() {
             let mut input = self.input[block].clone();
             for stmt in block_data.statements.iter() {
                 let mut equivs = HashMap::new();
-                let t = f(stmt, &input);
-                r.extend(t);
+                f(stmt, &input);
                 match stmt.kind {
                     StatementKind::Assign(ref place, ref rvalue) => match place {
                         Place::Base(place_base) => match place_base {
@@ -254,7 +252,6 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
                 }
             }
         }
-        r
     }
 
     #[allow(unused)]
@@ -269,7 +266,7 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
                     StatementKind::Assign(ref place, ref rvalue) => {
                         println!("\t\t place: {:?}, rvalue: {:?}", place, rvalue);
                     }
-                    _ => {} // We only really care about assignments
+                    _ => {}
                 }
             }
             println!("\t\t{:?}", block_data.terminator());
@@ -306,7 +303,7 @@ impl<'tcx, L: lattice::Lattice> Analysis<'tcx, L> {
 
 struct CompilerCallback<
     L: lattice::Lattice + Send + Sync,
-    F: for<'r, 's, 't0> std::ops::Fn(&'r rustc::mir::Statement<'s>, &'t0 L) -> Vec<String>
+    F: for<'r, 's, 't0> std::ops::Fn(&'r rustc::mir::Statement<'s>, &'t0 L)
         + 'static
         + Send
         + Sync,
@@ -317,7 +314,7 @@ struct CompilerCallback<
 
 impl<
         L: lattice::Lattice + Send + Sync,
-        F: for<'r, 's, 't0> std::ops::Fn(&'r rustc::mir::Statement<'s>, &'t0 L) -> Vec<String>
+        F: for<'r, 's, 't0> std::ops::Fn(&'r rustc::mir::Statement<'s>, &'t0 L)
             + 'static
             + Send
             + Sync,
@@ -344,14 +341,7 @@ impl<
                 let mir = tcx.optimized_mir(key);
                 let mut analysis = Analysis::<L>::new(mir);
                 analysis.run();
-                let errors = analysis.run_closure(&self.f);
-                if errors.len() == 0 {
-                    println!("No errors found.");
-                } else {
-                    for err in errors.into_iter() {
-                        println!("{}", err);
-                    }
-                }
+                analysis.run_closure(&self.f);
                 println!();
             }
         });
@@ -362,7 +352,7 @@ impl<
 
 pub fn run<
     L: lattice::Lattice + Send + Sync,
-    F: for<'r, 's, 't0> std::ops::Fn(&'r rustc::mir::Statement<'s>, &'t0 L) -> Vec<String>
+    F: for<'r, 's, 't0> std::ops::Fn(&'r rustc::mir::Statement<'s>, &'t0 L)
         + 'static
         + Send
         + Sync,

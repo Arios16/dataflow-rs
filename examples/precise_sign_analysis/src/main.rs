@@ -9,7 +9,7 @@ use dataflow::ty::TyKind;
 use std::collections::HashMap;
 
 // f receives a statement `stmt` and the dataflow information associated with that statement `input`.
-fn f(stmt: &Statement, input: &HashMap<Local, lattice::PreciseSignAnalysis>){
+fn f(stmt: &Statement, input: &HashMap<Local, lattice::PreciseSign>){
     if let StatementKind::Assign(_, ref rvalue) = stmt.kind {
         match &**rvalue {
             Rvalue::Cast(CastKind::Misc, op1, ty) => match ty.sty {
@@ -18,12 +18,12 @@ fn f(stmt: &Statement, input: &HashMap<Local, lattice::PreciseSignAnalysis>){
                         if let Place::Base(PlaceBase::Local(local)) = place {
                             if input.contains_key(local) {
                                 match input[local] {
-                                    lattice::PreciseSignAnalysis::Lower => {
+                                    lattice::PreciseSign::Lower => {
                                         println!("Error at {:?}. Value lower than 0 is being cast as unsigned integer.", 
                                                stmt.source_info.span);
                                     }
-                                    lattice::PreciseSignAnalysis::Top
-                                    | lattice::PreciseSignAnalysis::LowerEqual => {
+                                    lattice::PreciseSign::Top
+                                    | lattice::PreciseSign::LowerEqual => {
                                         println!("Possible error at {:?}. Value being cast as unsigned integer may be lower than 0.", 
                                                 stmt.source_info.span);
                                     }

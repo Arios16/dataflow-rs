@@ -3,7 +3,7 @@ use dataflow::mir::{BinOp, UnOp};
 use dataflow::ty::TyKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PreciseSignAnalysis {
+pub enum PreciseSign {
     Top,
     Bottom,
     Lower,
@@ -13,10 +13,10 @@ pub enum PreciseSignAnalysis {
     GreaterEqual,
 }
 
-use PreciseSignAnalysis::*;
+use PreciseSign::*;
 
 // The implementation for the flow functions is not very pretty, but I cant think of an elegant way to do it
-impl dataflow::lattice::SimpleLattice for PreciseSignAnalysis {
+impl dataflow::lattice::SimpleLattice for PreciseSign {
     fn applies(ty: &TyKind) -> bool {
         match ty {
             &TyKind::Int(_) => true,

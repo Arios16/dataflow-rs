@@ -5,7 +5,7 @@ use dataflow::mir::{BinOp, UnOp};
 use dataflow::ty::TyKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SignAnalysis {
+pub enum Sign {
     Top,
     Bottom,
     Lower,
@@ -13,8 +13,8 @@ pub enum SignAnalysis {
     Greater,
 }
 
-use SignAnalysis::*;
-impl dataflow::lattice::SimpleLattice for SignAnalysis {
+use Sign::*;
+impl dataflow::lattice::SimpleLattice for Sign {
     fn applies(ty: &TyKind) -> bool {
         match ty {
             &TyKind::Int(_) => true,

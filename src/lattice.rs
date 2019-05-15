@@ -34,12 +34,7 @@ pub trait Lattice: PartialEq + Eq + Sized + Clone + Debug {
         rvalue: &Box<Rvalue>,
         equiv: &mut HashMap<Local, Vec<Local>>,
     ) -> (Self, Self);
-    fn flow_function_call(
-        &self, 
-        func: &Operand, 
-        args: &Vec<Operand>, 
-        destination: &Place
-    ) -> Self;
+    fn flow_function_call(&self, func: &Operand, args: &Vec<Operand>, destination: &Place) -> Self;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
